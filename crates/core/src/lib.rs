@@ -22,6 +22,7 @@ pub mod secret_store;
 pub mod telemetry;
 
 pub mod api_key;
+pub mod hallucination;
 pub mod similarity;
 
 pub use api_key::{GeneratedApiKey, API_KEY_HEADER, KEY_PREFIX as API_KEY_PREFIX};

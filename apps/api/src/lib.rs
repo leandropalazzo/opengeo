@@ -153,6 +153,7 @@ pub fn router(state: AppState) -> Router {
         .merge(routes::portal_grants::v1_router())
         // Story 21.2 — per-org OIDC SSO connector config store.
         .merge(routes::sso::v1_router())
+        .merge(routes::claims::v1_router())
         .merge(routes::events::router_under_v1_relative());
 
     // Premium surface — only compiled into the `pro` build. The default OSS
