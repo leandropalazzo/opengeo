@@ -186,9 +186,15 @@ jobs:
             exit 0
           fi
 
-          # Collect all ghcr image tags in the compose file
+          # Collect all ghcr image tags in the compose file. Tags starting with
+          # `$` (e.g. `${ANSEO_VERSION:?set ...}`) are intentional env-var
+          # interpolation, resolved from .env at deploy time — not a pinned
+          # literal, so they're not drift and must be excluded here. Otherwise
+          # they get captured as garbage (regex stops at the first space
+          # inside the `:?` error message) that breaks shell quoting when
+          # later spliced unquoted into the Evaluate step's script.
           COMPOSE_TAGS=$(grep -oP 'ghcr\.io/[^:]+:\K[^\s"]+' infra/standalone/compose.yml \
-            | grep -v '^$' | sort -u || true)
+            | grep -v '^$' | grep -v '^\$' | sort -u || true)
 
           STALE=0
           STALE_LIST=""
