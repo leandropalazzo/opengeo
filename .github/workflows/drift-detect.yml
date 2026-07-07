@@ -132,17 +132,29 @@ jobs:
 
           # Check the last successful docs-site workflow run and the tag it used.
           # The docs-site rebuild dispatch (38.21) puts the OSS tag in the run name.
+          # `gh api` writes its error body to stdout before failing on a non-2xx
+          # response, so capture with `set +e` and discard stdout on failure —
+          # otherwise the raw JSON error leaks into $LAST_DOCS_TAG and later,
+          # unquoted, into the "Evaluate" step's shell script.
+          set +e
           LAST_DOCS_TAG=$(gh api \
             "repos/leandropalazzo/anseo-web/actions/workflows/build.yml/runs?status=success&per_page=1" \
-            --jq '.workflow_runs[0].head_branch // ""' 2>/dev/null || echo "")
+            --jq '.workflow_runs[0].head_branch // ""' 2>/dev/null)
+          if [[ $? -ne 0 ]]; then
+            LAST_DOCS_TAG=""
+          fi
 
           # If anseo-web uses a different workflow name, try a broader search
           if [[ -z "$LAST_DOCS_TAG" ]]; then
             LAST_DOCS_TAG=$(gh api \
               "repos/leandropalazzo/anseo-web/actions/runs?status=success&per_page=5" \
               --jq '[.workflow_runs[] | select(.name | test("deploy|build|publish"; "i")) | .head_branch][0] // ""' \
-              2>/dev/null || echo "")
+              2>/dev/null)
+            if [[ $? -ne 0 ]]; then
+              LAST_DOCS_TAG=""
+            fi
           fi
+          set -e
 
           if [[ -z "$LAST_DOCS_TAG" || "$LAST_DOCS_TAG" == "$LATEST" ]]; then
             echo "docs_ok=true" >> "$GITHUB_OUTPUT"
