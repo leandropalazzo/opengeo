@@ -10,6 +10,8 @@
 //! - Extractability (AEO: be extractable) — answer blocks, question headings, semantic sections
 //! - Corroboration (AEO: be credible) — outbound links, named sources, source context
 
+pub mod central_log;
+
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
 use std::time::Duration;
