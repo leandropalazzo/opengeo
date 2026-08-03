@@ -473,15 +473,23 @@ mod tests {
 
     #[test]
     fn is_port_listening_returns_false_for_closed_port() {
-        // Bind then immediately drop to free the port.
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-        // Port is now closed.
-        assert!(
-            !is_port_listening(port),
-            "dropped port must not report as listening"
-        );
+        // Ephemeral ports are a machine-wide shared resource: under parallel
+        // test execution, a port we just freed can occasionally be re-claimed
+        // by another concurrently-running test (e.g. handoff::tests also
+        // binds 127.0.0.1:0) before this check runs. Retry against a fresh
+        // port a few times before treating it as a real failure.
+        for attempt in 0..5 {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            drop(listener);
+            if !is_port_listening(port) {
+                return;
+            }
+            if attempt < 4 {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+        panic!("dropped port must not report as listening (persisted across retries)");
     }
 
     #[test]
