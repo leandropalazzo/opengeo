@@ -96,6 +96,31 @@ fn delete_local_sentinel() -> Result<(), OpenGeoError> {
 
 // ── DB sentinel logic ─────────────────────────────────────────────────────────
 
+// Inserts the sentinel row if absent; if a concurrent caller wins the race,
+// adopts whatever UUID they inserted instead of erroring.
+async fn insert_or_adopt_sentinel(
+    pool: &sqlx::PgPool,
+    candidate_uuid: Uuid,
+) -> Result<Uuid, OpenGeoError> {
+    let inserted: Option<(Uuid,)> = sqlx::query_as(
+        "INSERT INTO anseo_sentinel (id, instance_uuid) VALUES ('instance', $1) \
+         ON CONFLICT (id) DO NOTHING RETURNING instance_uuid",
+    )
+    .bind(candidate_uuid)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| OpenGeoError::Config(format!("preflight: cannot write sentinel: {e}")))?;
+
+    match inserted {
+        Some((uuid,)) => Ok(uuid),
+        None => sqlx::query_as("SELECT instance_uuid FROM anseo_sentinel WHERE id = 'instance'")
+            .fetch_one(pool)
+            .await
+            .map(|(uuid,): (Uuid,)| uuid)
+            .map_err(|e| OpenGeoError::Config(format!("preflight: cannot read sentinel: {e}"))),
+    }
+}
+
 async fn check_sentinel(url: &str, adopt: bool, reinit: bool) -> Result<(), OpenGeoError> {
     let pool = PgPoolOptions::new()
         .max_connections(1)
@@ -114,8 +139,13 @@ async fn check_sentinel(url: &str, adopt: bool, reinit: bool) -> Result<(), Open
             })?;
     eprintln!("  DB: {db_name} (user: {db_user})");
 
-    // Ensure sentinel table exists (idempotent bootstrap DDL).
-    sqlx::query(
+    // Ensure sentinel table exists (idempotent bootstrap DDL). Under true
+    // concurrency `CREATE TABLE IF NOT EXISTS` isn't atomic — two racing
+    // connections can both see "doesn't exist" and both attempt creation,
+    // colliding on the implicit row type's `pg_type_typname_nsp_index`
+    // unique index (Postgres SQLSTATE 23505). That collision just means a
+    // concurrent caller already created the table, so treat it as success.
+    if let Err(e) = sqlx::query(
         "CREATE TABLE IF NOT EXISTS anseo_sentinel (\
             id            TEXT        PRIMARY KEY DEFAULT 'instance',\
             instance_uuid UUID        NOT NULL,\
@@ -124,7 +154,16 @@ async fn check_sentinel(url: &str, adopt: bool, reinit: bool) -> Result<(), Open
     )
     .execute(&pool)
     .await
-    .map_err(|e| OpenGeoError::Config(format!("preflight: cannot create sentinel table: {e}")))?;
+    {
+        let is_concurrent_create_race = e
+            .as_database_error()
+            .is_some_and(|db_err| db_err.code().as_deref() == Some("23505"));
+        if !is_concurrent_create_race {
+            return Err(OpenGeoError::Config(format!(
+                "preflight: cannot create sentinel table: {e}"
+            )));
+        }
+    }
 
     // --reinit: clear both sides, then fall through to first-run creation.
     if reinit {
@@ -146,18 +185,17 @@ async fn check_sentinel(url: &str, adopt: bool, reinit: bool) -> Result<(), Open
 
     match (db_row, local_uuid) {
         // First run (or post-reinit): create a fresh UUID in both places.
+        //
+        // Racing concurrent callers (e.g. parallel test processes against a
+        // shared DB) can all observe `db_row == None` and all attempt this
+        // insert — `ON CONFLICT DO NOTHING` + a re-read on the losing side
+        // makes that safe and keeps every caller agreeing on one final UUID.
         (None, None) => {
             let new_uuid = Uuid::new_v4();
-            sqlx::query("INSERT INTO anseo_sentinel (id, instance_uuid) VALUES ('instance', $1)")
-                .bind(new_uuid)
-                .execute(&pool)
-                .await
-                .map_err(|e| {
-                    OpenGeoError::Config(format!("preflight: cannot write sentinel: {e}"))
-                })?;
-            write_local_sentinel(new_uuid)?;
+            let final_uuid = insert_or_adopt_sentinel(&pool, new_uuid).await?;
+            write_local_sentinel(final_uuid)?;
             let verb = if reinit { "reinitialised" } else { "created" };
-            eprintln!("  Sentinel: {verb} ({new_uuid})");
+            eprintln!("  Sentinel: {verb} ({final_uuid})");
         }
 
         // DB has sentinel, local file absent: write local file (adopt from DB).
@@ -168,14 +206,8 @@ async fn check_sentinel(url: &str, adopt: bool, reinit: bool) -> Result<(), Open
 
         // Local file exists, DB row absent (DB was wiped/migrated): restore into DB.
         (None, Some(local_uuid)) => {
-            sqlx::query("INSERT INTO anseo_sentinel (id, instance_uuid) VALUES ('instance', $1)")
-                .bind(local_uuid)
-                .execute(&pool)
-                .await
-                .map_err(|e| {
-                    OpenGeoError::Config(format!("preflight: cannot restore sentinel: {e}"))
-                })?;
-            eprintln!("  Sentinel: restored to DB ({local_uuid})");
+            let final_uuid = insert_or_adopt_sentinel(&pool, local_uuid).await?;
+            eprintln!("  Sentinel: restored to DB ({final_uuid})");
         }
 
         // Both sides present: check for match.
