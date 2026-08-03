@@ -176,6 +176,18 @@ impl MetricsStore {
         })
     }
 
+    /// Returns crawl → referral ratios for verified bots in the given window.
+    ///
+    /// **Degraded mode — `CrawlsOnly`:** referral data is not yet captured in
+    /// the database (no `referral_events` table exists in the current schema).
+    /// The function is intentionally complete: it returns a well-formed
+    /// `CrawlReferReport` with `state: CrawlReferState::CrawlsOnly` and
+    /// `attributed_referrals: 0` for every bot rather than panicking or
+    /// returning an error. Callers can surface this state to the user.
+    ///
+    /// Once a `referral_events` table is added (tracked in the migration
+    /// pipeline), replace the `attributed_referrals: 0` placeholder below with
+    /// a LEFT JOIN against that table and compute `ratio` from the real counts.
     pub async fn fetch_crawl_refer_ratio(
         &self,
         params: MetricsParams,
@@ -194,6 +206,9 @@ impl MetricsStore {
             .map(|bot| CrawlReferRatio {
                 bot_id: bot.bot_id.clone(),
                 verified_crawl_hits: bot.verified_hits,
+                // TODO: wire to referral_events table when available (Story 33.1).
+                // Until that table exists the referral count is always zero and
+                // ratio remains None — state is CrawlsOnly to signal degraded mode.
                 attributed_referrals: 0,
                 ratio: None,
                 state: CrawlReferState::CrawlsOnly,

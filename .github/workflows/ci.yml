@@ -136,6 +136,10 @@ jobs:
           echo "leak-guard: OSS graph is premium-free ✓"
       - name: cargo build --workspace
         run: cargo build --workspace --locked
+      - name: Audit CLI gate smoke (Story 32.3 — --fail-on flag exists)
+        # Proves the audit subcommand compiles and --fail-on is a registered flag.
+        # No live URL is required; --help exits 0 and prints usage.
+        run: cargo run --locked -p anseo-cli --bin anseo -- audit --help
       - name: parity-contract gate (Story 36.10 / RISK-4)
         # Explicit named step so the three-surface parity enforcement is visible
         # in the CI job log rather than buried in the full test run.
