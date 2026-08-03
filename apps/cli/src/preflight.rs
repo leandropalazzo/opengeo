@@ -69,8 +69,9 @@ fn read_local_sentinel() -> Result<Option<Uuid>, OpenGeoError> {
     }
     let raw = std::fs::read_to_string(&path)
         .map_err(|e| OpenGeoError::Config(format!("preflight: cannot read sentinel file: {e}")))?;
-    let uuid = Uuid::parse_str(raw.trim())
-        .map_err(|e| OpenGeoError::Config(format!("preflight: sentinel file has invalid UUID: {e}")))?;
+    let uuid = Uuid::parse_str(raw.trim()).map_err(|e| {
+        OpenGeoError::Config(format!("preflight: sentinel file has invalid UUID: {e}"))
+    })?;
     Ok(Some(uuid))
 }
 
@@ -86,8 +87,9 @@ fn write_local_sentinel(uuid: Uuid) -> Result<(), OpenGeoError> {
 fn delete_local_sentinel() -> Result<(), OpenGeoError> {
     let path = sentinel_path()?;
     if path.exists() {
-        std::fs::remove_file(&path)
-            .map_err(|e| OpenGeoError::Config(format!("preflight: cannot delete sentinel file: {e}")))?;
+        std::fs::remove_file(&path).map_err(|e| {
+            OpenGeoError::Config(format!("preflight: cannot delete sentinel file: {e}"))
+        })?;
     }
     Ok(())
 }
@@ -103,12 +105,13 @@ async fn check_sentinel(url: &str, adopt: bool, reinit: bool) -> Result<(), Open
         .map_err(|e| OpenGeoError::Config(format!("preflight: cannot connect to database: {e}")))?;
 
     // Print DB identity for operator visibility.
-    let (db_name, db_user): (String, String) = sqlx::query_as(
-        "SELECT current_database()::text, current_user::text",
-    )
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| OpenGeoError::Config(format!("preflight: DB identity query failed: {e}")))?;
+    let (db_name, db_user): (String, String) =
+        sqlx::query_as("SELECT current_database()::text, current_user::text")
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| {
+                OpenGeoError::Config(format!("preflight: DB identity query failed: {e}"))
+            })?;
     eprintln!("  DB: {db_name} (user: {db_user})");
 
     // Ensure sentinel table exists (idempotent bootstrap DDL).
@@ -133,12 +136,11 @@ async fn check_sentinel(url: &str, adopt: bool, reinit: bool) -> Result<(), Open
     }
 
     // Read current DB sentinel (if any).
-    let db_row: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT instance_uuid FROM anseo_sentinel WHERE id = 'instance'",
-    )
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| OpenGeoError::Config(format!("preflight: cannot read sentinel: {e}")))?;
+    let db_row: Option<(Uuid,)> =
+        sqlx::query_as("SELECT instance_uuid FROM anseo_sentinel WHERE id = 'instance'")
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| OpenGeoError::Config(format!("preflight: cannot read sentinel: {e}")))?;
 
     let local_uuid = read_local_sentinel()?;
 
@@ -146,13 +148,13 @@ async fn check_sentinel(url: &str, adopt: bool, reinit: bool) -> Result<(), Open
         // First run (or post-reinit): create a fresh UUID in both places.
         (None, None) => {
             let new_uuid = Uuid::new_v4();
-            sqlx::query(
-                "INSERT INTO anseo_sentinel (id, instance_uuid) VALUES ('instance', $1)",
-            )
-            .bind(new_uuid)
-            .execute(&pool)
-            .await
-            .map_err(|e| OpenGeoError::Config(format!("preflight: cannot write sentinel: {e}")))?;
+            sqlx::query("INSERT INTO anseo_sentinel (id, instance_uuid) VALUES ('instance', $1)")
+                .bind(new_uuid)
+                .execute(&pool)
+                .await
+                .map_err(|e| {
+                    OpenGeoError::Config(format!("preflight: cannot write sentinel: {e}"))
+                })?;
             write_local_sentinel(new_uuid)?;
             let verb = if reinit { "reinitialised" } else { "created" };
             eprintln!("  Sentinel: {verb} ({new_uuid})");
@@ -166,15 +168,13 @@ async fn check_sentinel(url: &str, adopt: bool, reinit: bool) -> Result<(), Open
 
         // Local file exists, DB row absent (DB was wiped/migrated): restore into DB.
         (None, Some(local_uuid)) => {
-            sqlx::query(
-                "INSERT INTO anseo_sentinel (id, instance_uuid) VALUES ('instance', $1)",
-            )
-            .bind(local_uuid)
-            .execute(&pool)
-            .await
-            .map_err(|e| {
-                OpenGeoError::Config(format!("preflight: cannot restore sentinel: {e}"))
-            })?;
+            sqlx::query("INSERT INTO anseo_sentinel (id, instance_uuid) VALUES ('instance', $1)")
+                .bind(local_uuid)
+                .execute(&pool)
+                .await
+                .map_err(|e| {
+                    OpenGeoError::Config(format!("preflight: cannot restore sentinel: {e}"))
+                })?;
             eprintln!("  Sentinel: restored to DB ({local_uuid})");
         }
 
