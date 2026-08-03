@@ -39,7 +39,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 tracing-bunyan-formatter = "0.3"
 tokio-test = "0.4"
-sqlx = { version = "0.8", features = ["runtime-tokio", "macros", "migrate", "postgres", "uuid", "chrono"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "macros", "migrate", "postgres", "uuid", "chrono"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 wiremock = "0.6"
 insta = { version = "1", features = ["yaml", "json"] }
